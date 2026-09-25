@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  gsuite-cli:
+    build: .
+    container_name: gsuite-cli-hackathon
+    stdin_open: true
+    tty: true
+    volumes:
+      # Mount config directory for credentials
+      - ./config:/app/.config/gsuite-cli
+      # Mount cache directory for performance
+      - ./cache:/app/.cache/gsuite-cli
+      # Mount local directory for file operations
+      - ./data:/app/data
+    environment:
+      - PYTHONUNBUFFERED=1
+      - GSUITE_CLI_CONFIG_DIR=/app/.config/gsuite-cli
+      - GSUITE_CLI_CACHE_DIR=/app/.cache/gsuite-cli
+    working_dir: /app
+    networks:
+      - gsuite-network
+    restart: unless-stopped
+
+  # Optional: Add a Redis cache for better performance
+  redis:
+    image: redis:7-alpine
+    container_name: gsuite-cli-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - gsuite-network
+    restart: unless-stopped
+
+networks:
+  gsuite-network:
+    driver: bridge
+
+volumes:
+  redis_data:
