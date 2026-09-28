@@ -7,7 +7,7 @@ from typing import List, Dict, Any, Optional, Union
 
 from googleapiclient.errors import HttpError
 
-from ..auth.oauth import OAuthManager
+from ..auth.oauth import OAuthManager, AuthenticationError
 from ..utils.formatters import print_error
 from ..utils.cache import ServiceCache
 
@@ -30,6 +30,8 @@ class SheetsService:
             self.service = self.oauth_manager.build_service('sheets', 'v4')
             self.drive_service = self.oauth_manager.build_service('drive', 'v3')
             return self.service is not None and self.drive_service is not None
+        except AuthenticationError:
+            raise
         except Exception as e:
             logger.error(f"Failed to initialize Sheets services: {e}")
             return False

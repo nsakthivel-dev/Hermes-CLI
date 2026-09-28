@@ -9,7 +9,7 @@ from typing import List, Dict, Any, Optional
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 
-from ..auth.oauth import OAuthManager
+from ..auth.oauth import OAuthManager, AuthenticationError
 from ..utils.formatters import print_error, print_info, print_success
 
 logger = logging.getLogger(__name__)
@@ -29,6 +29,8 @@ class DriveService:
         try:
             self.service = self.oauth_manager.build_service('drive', 'v3')
             return self.service is not None
+        except AuthenticationError:
+            raise
         except Exception as e:
             logger.error(f"Failed to initialize Drive service: {e}")
             return False

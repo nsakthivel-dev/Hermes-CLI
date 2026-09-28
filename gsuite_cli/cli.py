@@ -14,7 +14,21 @@ from colorama import init, Fore, Style
 from googleapiclient.http import MediaFileUpload
 
 from . import __version__
-from .auth.oauth import OAuthManager
+from .auth.oauth import OAuthManager, AuthenticationError
+from .utils.errors import (
+    ConfigurationError,
+    AINLPError,
+    GoogleAPIError,
+    CacheError,
+    handle_authentication_error,
+    handle_google_api_error,
+    handle_configuration_error,
+    handle_ai_error,
+    handle_resource_resolution_error,
+    handle_cache_error,
+)
+from .utils.validator import handle_validation_error
+from .services.resource_resolver import ResourceResolutionError
 from .utils.formatters import setup_logging, print_success, print_error, print_info, print_warning, format_output, print_header, print_section, print_key_value_pairs, format_email_body
 from .services.calendar import CalendarService
 from .services.calendar_resolver import CalendarResolver, CalendarEventResolver, CalendarResolutionError
@@ -188,10 +202,6 @@ def cli(ctx, debug, config_dir, no_cache):
     # Update debug mode from config if not specified in command line
     if not debug and ctx.obj['config_manager'].get('debug_mode'):
         setup_logging(True)
-    
-    # Check authentication status
-    if not ctx.obj['oauth_manager'].is_authenticated():
-        print_info("Not authenticated. Run 'hermes auth login' (or 'python -m gsuite_cli.cli auth login') to get started.")
 
 
 @cli.group()
@@ -6020,9 +6030,47 @@ def top_profile(ctx, resource=None):
 
 
 def main():
-    """Main entry point"""
+    """
+    Main entry point enforcing the Required Hermes CLI Workflow:
+    Step 1: Input, Parse & Validate -> If invalid: Error + AI/Local suggestion -> STOP.
+    Step 2: Authentication Check -> If invalid credentials: OAuth Login/Consent -> Save/Refresh token locally -> STOP on failure.
+    Step 3: Core Engine, Config & Resource Resolution.
+    Step 4: Gemini AI (Conditional; bypassed for direct commands).
+    Service Selection -> Google Workspace API -> Cache -> Formatter -> Terminal Result.
+    """
+    raw_args = sys.argv[1:]
+    
     try:
-        cli()
+        # STEP 1: Parse and validate input structurally
+        cli.main(args=raw_args, prog_name="hermes", standalone_mode=False)
+    except click.exceptions.Exit as e:
+        sys.exit(e.exit_code)
+    except click.Abort:
+        sys.exit(1)
+    except click.ClickException as e:
+        # STEP 1: Validation failed -> Error + AI suggestion -> STOP
+        cfg = None
+        try:
+            cfg = ConfigManager()
+        except Exception:
+            pass
+        handle_validation_error(e, raw_args, config_manager=cfg)
+        sys.exit(1)
+    except AuthenticationError as e:
+        # STEP 2: Authentication failed -> Explain problem + STOP
+        handle_authentication_error(e)
+    except HttpError as e:
+        # Google API Error -> Friendly Error + Recovery Suggestion -> STOP
+        handle_google_api_error(e)
+    except (ResourceResolutionError, CalendarResolutionError) as e:
+        # Resource resolution error -> Explain problem + Suggestion -> STOP
+        handle_resource_resolution_error(e)
+    except ConfigurationError as e:
+        handle_configuration_error(e)
+    except AINLPError as e:
+        handle_ai_error(e)
+    except CacheError as e:
+        handle_cache_error(e)
     except KeyboardInterrupt:
         print_info("\nOperation cancelled by user")
         sys.exit(1)
@@ -6035,3 +6083,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+

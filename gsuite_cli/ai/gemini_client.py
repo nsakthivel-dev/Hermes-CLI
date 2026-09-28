@@ -47,7 +47,7 @@ class GeminiClient:
             )
             return response.text
         except Exception as e:
-            logger.error(f"Error generating content: {e}")
+            logger.warning(f"Error generating content: {e}")
             return None
 
     def get_chat_session(self, history: List[Dict[str, Any]] = None):

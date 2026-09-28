@@ -3,7 +3,7 @@ from typing import List, Dict, Any, Optional
 
 from googleapiclient.errors import HttpError
 
-from ..auth.oauth import OAuthManager
+from ..auth.oauth import OAuthManager, AuthenticationError
 from ..utils.formatters import print_error
 from ..utils.cache import ServiceCache
 
@@ -32,6 +32,8 @@ class FormsService:
             self.forms_service = self.oauth_manager.build_service('forms', 'v1')
             self.drive_service = self.oauth_manager.build_service('drive', 'v3')
             return self.forms_service is not None
+        except AuthenticationError:
+            raise
         except Exception as e:
             logger.error(f"Failed to initialize Forms services: {e}")
             return False

@@ -16,7 +16,7 @@ from typing import List, Dict, Any, Optional, Union
 
 from googleapiclient.errors import HttpError
 
-from ..auth.oauth import OAuthManager
+from ..auth.oauth import OAuthManager, AuthenticationError
 from ..utils.formatters import format_datetime, print_error, print_info, validate_email, truncate_text
 from ..utils.cache import ServiceCache
 
@@ -41,6 +41,8 @@ class GmailService:
         try:
             self.service = self.oauth_manager.build_service('gmail', 'v1')
             return self.service is not None
+        except AuthenticationError:
+            raise
         except Exception as e:
             logger.error(f"Failed to initialize Gmail service: {e}")
             return False

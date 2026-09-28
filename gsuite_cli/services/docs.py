@@ -8,7 +8,7 @@ from datetime import datetime
 
 from googleapiclient.errors import HttpError
 
-from ..auth.oauth import OAuthManager
+from ..auth.oauth import OAuthManager, AuthenticationError
 from ..utils.formatters import print_error
 from ..utils.cache import ServiceCache
 
@@ -31,6 +31,8 @@ class DocsService:
             self.docs_service = self.oauth_manager.build_service('docs', 'v1')
             self.drive_service = self.oauth_manager.build_service('drive', 'v3')
             return self.docs_service is not None and self.drive_service is not None
+        except AuthenticationError:
+            raise
         except Exception as e:
             logger.error(f"Failed to initialize Docs services: {e}")
             return False

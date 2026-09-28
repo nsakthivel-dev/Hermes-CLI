@@ -8,7 +8,8 @@ import logging
 from pathlib import Path
 from typing import Optional, Dict, Any
 
-from ..utils.formatters import print_error, print_info
+from ..utils.formatters import print_error, print_info, print_success
+from ..utils.errors import AuthenticationError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -314,10 +315,48 @@ class OAuthManager:
         except Exception as e:
             return {"authenticated": False, "error": str(e)}
     
+    def ensure_authenticated(self, scopes: Optional[list] = None) -> Credentials:
+        """
+        Step 2: Authentication Check.
+        Verifies whether HERMES has valid Google authentication.
+        - If valid credentials exist: returns them immediately.
+        - If expired with refresh token: refreshes token locally and returns them.
+        - If unauthenticated: initiates Google OAuth 2.0 flow and stores token locally.
+        - If authentication cannot be completed: raises AuthenticationError and stops safely.
+        """
+        scopes = scopes or ALL_SCOPES
+        if self.is_authenticated():
+            creds = self.get_credentials(scopes)
+            if creds and creds.valid:
+                return creds
+
+        # Not authenticated: check for OAuth client configuration
+        client_cfg = self.get_client_config()
+        if not client_cfg:
+            raise AuthenticationError(
+                "Google Workspace OAuth client configuration not found.",
+                f"Please place 'credentials.json' in {self.credentials_file} "
+                "or set HERMES_GOOGLE_CLIENT_SECRET, then run 'hermes auth login'."
+            )
+
+        print_info("Starting Google OAuth 2.0 authentication...")
+        creds = self._run_oauth_flow(scopes)
+        if not creds or not creds.valid:
+            raise AuthenticationError(
+                "Authentication was not completed or was cancelled.",
+                "Please run 'hermes auth login' to authenticate with your Google account."
+            )
+        self._save_credentials(creds)
+        print_success("✓ Authentication successful! Token stored locally.")
+        return creds
+
     def build_service(self, service_name: str, version: str = 'v3'):
-        creds = self.get_credentials(ALL_SCOPES)
+        creds = self.ensure_authenticated(ALL_SCOPES)
         if not creds:
-            return None
+            raise AuthenticationError(
+                f"Authentication failed while preparing {service_name} service.",
+                "Please run 'hermes auth login' to authenticate."
+            )
         
         try:
             kwargs = {

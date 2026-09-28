@@ -12,7 +12,7 @@ from dateutil import parser as date_parser
 from dateutil import tz
 from googleapiclient.errors import HttpError
 
-from ..auth.oauth import OAuthManager
+from ..auth.oauth import OAuthManager, AuthenticationError
 from ..utils.formatters import print_error, print_info
 from ..utils.cache import ServiceCache, cached
 
@@ -33,6 +33,8 @@ class CalendarService:
         try:
             self.service = self.oauth_manager.build_service('calendar', 'v3')
             return self.service is not None
+        except AuthenticationError:
+            raise
         except Exception as e:
             logger.error(f"Failed to initialize Calendar service: {e}")
             return False
