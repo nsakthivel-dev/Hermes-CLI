@@ -19,6 +19,7 @@ from .nlp import NaturalLanguageProcessor
 from .summarizer import EmailSummarizer
 from .analytics import AIAnalytics
 from .chatbot import AIChatBot
+from .query_engine import NaturalQueryEngine, ConversationContext
 
 logger = logging.getLogger(__name__)
 
@@ -49,87 +50,97 @@ def ai():
 
 @ai.command('ask')
 @click.argument('query', required=True)
-@click.option('--execute', is_flag=True, help='Execute the suggested command')
-@click.option('--format', default='table', type=click.Choice(['table', 'json', 'csv']))
+@click.option('--execute/--no-execute', 'execute_flag', default=True, help='Execute the interpreted query (default: True)')
+@click.option('--suggest-only', is_flag=True, help='Only suggest the command without executing')
+@click.option('--format', 'output_format', default='table', type=click.Choice(['table', 'json', 'csv']))
+@click.option('--debug', is_flag=True, default=False, help='Show internal AI/tool execution pipeline')
 @click.pass_context
-def ai_ask(ctx, query, execute, format):
-    """Ask AI in natural language and get command suggestions"""
-    config_manager = ctx.obj.get('config_manager')
-    nlp = NaturalLanguageProcessor(config_manager)
+def ai_ask(ctx, query, execute_flag, suggest_only, output_format, debug):
+    """
+    Ask AI in natural language to query and interact with Google Workspace.
     
-    print_header("🤖 AI Command Assistant")
-    print(f"Query: {query}")
-    print()
+    Examples:
+      hermes ai ask "Show my unread emails"
+      hermes ai ask "What meetings do I have today?"
+      hermes ai ask "Find the spreadsheet named Q3 Financials"
+      hermes ai ask "Show the data from my Q3 Financials spreadsheet"
+      hermes ai ask "Summarize my unread emails"
+      hermes ai ask "Show my pending tasks"
+      hermes ai ask "Find the files I modified recently"
+      hermes ai ask "Show my upcoming meetings and related tasks"
+    """
+    config_manager = ctx.obj.get('config_manager') if ctx.obj else None
+    oauth_manager = ctx.obj.get('oauth_manager') if ctx.obj else None
+    cache_manager = ctx.obj.get('cache_manager') if ctx.obj else None
+    is_debug = debug or (ctx.obj and ctx.obj.get('debug', False))
     
-    # Parse the natural language query
-    parsed = nlp.parse_command(query)
-    
-    print_section("Intent Analysis")
-    print(f"Intent: {parsed['intent']}")
-    print(f"Confidence: {parsed['confidence'] * 100}%")
-    
-    if parsed['entities']:
-        print("Entities found:")
-        for entity_type, value in parsed['entities'].items():
-            if isinstance(value, list):
-                print(f"  {entity_type}: {', '.join(str(v) for v in value)}")
-            else:
-                print(f"  {entity_type}: {value}")
-    
-    print()
-    
-    # Suggest command
-    suggested_command = nlp.suggest_command(query)
-    print_section("Suggested Command")
-    print(f"$ {suggested_command}")
-    
-    # Execute if requested
-    if execute and not suggested_command.startswith('#'):
+    # If explicitly requested suggest-only or no-execute, display intent analysis and command suggestion
+    if suggest_only or not execute_flag:
+        nlp = NaturalLanguageProcessor(config_manager)
+        if output_format == 'table':
+            print_header("🤖 AI Command Assistant")
+            print(f"Query: {query}")
+            print()
+        
+        parsed = nlp.parse_command(query)
+        suggested_command = nlp.suggest_command(query)
+        
+        if output_format == 'json':
+            import json
+            print(json.dumps({
+                'intent': parsed,
+                'suggested_command': suggested_command,
+            }, indent=2, default=str))
+            return
+        
+        print_section("Intent Analysis")
+        print(f"Intent: {parsed.get('intent', 'unknown')}")
+        print(f"Service: {parsed.get('service', 'unknown')}")
+        print(f"Operation: {parsed.get('operation', 'unknown')}")
+        print(f"Confidence: {parsed.get('confidence', 0.0) * 100}%")
+        
+        if parsed.get('entities'):
+            print("Entities found:")
+            for entity_type, value in parsed['entities'].items():
+                if isinstance(value, list):
+                    print(f"  {entity_type}: {', '.join(str(v) for v in value)}")
+                else:
+                    print(f"  {entity_type}: {value}")
         print()
-        print_section("Executing Command")
-        try:
-            # This is a simplified execution - in production, you'd want proper command routing
-            if 'calendar' in suggested_command:
-                # Execute calendar command
-                service = CalendarService(ctx.obj['oauth_manager'], ctx.obj.get('cache_manager'))
-                events = service.list_events()
-                if events:
-                    formatted_events = []
-                    for event in events[:10]:  # Limit to 10 for demo
-                        formatted_events.append({
-                            'ID': event['id'][:15] + '...',
-                            'Title': event['summary'][:30],
-                            'Start': event['start'][:10],
-                            'End': event['end'][:10]
-                        })
-                    output = format_output(formatted_events, format_type=format)
-                    print(output)
-                else:
-                    print_info("No events found")
+        print_section("Suggested Command")
+        print(f"$ {suggested_command}")
+        return
+
+    # Natural Language Query Pipeline Execution
+    engine = NaturalQueryEngine(
+        oauth_manager=oauth_manager,
+        config_manager=config_manager,
+        cache_manager=cache_manager,
+    )
+    
+    if output_format == 'table' and not is_debug:
+        print_header("🤖 HERMES AI")
+        print(f"Query: {query}")
+        print()
+
+    try:
+        result = engine.execute_query(
+            query=query,
+            output_format=output_format,
+            allow_interactive=True,
+            debug=is_debug,
+        )
+        
+        if result.get('output'):
+            print(result['output'])
             
-            elif 'gmail' in suggested_command:
-                # Execute gmail command
-                service = GmailService(ctx.obj['oauth_manager'], ctx.obj.get('cache_manager'))
-                emails = service.list_messages(max_results=10)
-                if emails:
-                    formatted_emails = []
-                    for email in emails:
-                        formatted_emails.append({
-                            'ID': email['id'][:15] + '...',
-                            'From': email['from'][:30],
-                            'Subject': email['subject'][:40],
-                            'Date': email['date'][:10],
-                            'Snippet': email['snippet'][:50] + '...'
-                        })
-                    output = format_output(formatted_emails, format_type=format)
-                    print(output)
-                else:
-                    print_info("No emails found")
-            
-            print_success("Command executed successfully!")
-            
-        except Exception as e:
-            print_error(f"Error executing command: {e}")
+    except Exception as e:
+        if output_format == 'json':
+            import json
+            print(json.dumps({'status': 'error', 'error': str(e)}))
+        else:
+            print_error(f"Error processing query: {e}")
+
 
 
 @ai.command('summarize')
@@ -574,47 +585,80 @@ def ai_compose(ctx, prompt, to):
 @click.option('--model', help='Gemini model to use')
 @click.pass_context
 def ai_chat(ctx, model):
-    """Start an interactive chat session with AI"""
+    """
+    Start an interactive natural language chat session with AI.
+    Integrates the complete Workspace query execution pipeline with contextual follow-up support.
+    
+    Commands:
+      /clear - Reset conversation context
+      exit   - End chat session
+    """
     config_manager = ctx.obj.get('config_manager')
-    api_key = config_manager.get('ai.gemini_api_key')
-    config_model = config_manager.get('ai.model_name', 'gemini-3.6-flash')
+    oauth_manager = ctx.obj.get('oauth_manager')
+    cache_manager = ctx.obj.get('cache_manager')
     
-    # Use provided model or fall back to config model
+    api_key = config_manager.get('ai.gemini_api_key') if config_manager else None
+    config_model = config_manager.get('ai.model_name', 'gemini-3.6-flash') if config_manager else 'gemini-3.6-flash'
     model_to_use = model or config_model
-    
-    if not api_key:
-        print_error("Gemini API key not configured.")
-        print_info("Set it with: hermes config set ai.gemini_api_key YOUR_KEY")
-        return
 
-    chatbot = AIChatBot(gemini_key=api_key, model_name=model_to_use)
-    
-    print_header("💬 AI Chat Session")
-    print_info(f"Model: {model_to_use}")
-    print_info("Type 'exit', 'quit', or 'bye' to end the session.")
-    print("-" * 40)
-    
+    chatbot = AIChatBot(gemini_key=api_key or '', model_name=model_to_use)
+    context = ConversationContext()
+    engine = NaturalQueryEngine(
+        oauth_manager=oauth_manager,
+        config_manager=config_manager,
+        cache_manager=cache_manager,
+        context=context,
+    )
+
+    print_header("💬 Hermes AI Chat Session")
+    if api_key:
+        print_info(f"Model: {model_to_use}")
+    else:
+        print_info("Gemini API key not configured (running in local rule-based fallback mode).")
+        print_info("Set key with: hermes config set ai.gemini_api_key YOUR_KEY")
+    print_info("Commands: Type '/clear' to reset context, 'exit' or 'quit' to end.")
+    print("-" * 50)
+
     while True:
         try:
-            query = click.prompt(f"\n{Fore.CYAN}You")
-            
+            query = click.prompt(f"\n{Fore.CYAN}You").strip()
+
             if query.lower() in ['exit', 'quit', 'bye']:
                 print_info("Ending chat session. Goodbye!")
                 break
-            
-            if not query.strip():
+
+            if query.lower() in ['/clear', 'clear']:
+                context.clear()
+                print_success("✓ Conversation context cleared.")
                 continue
-                
-            print(f"\n{Fore.YELLOW}AI{Style.RESET_ALL}: ", end="", flush=True)
-            response = chatbot.chat(query)
-            print(response)
-            
+
+            if not query:
+                continue
+
+            # Check if this can be interpreted as a Workspace natural query
+            intent = engine.interpret_query(query)
+
+            if intent.is_valid and intent.service != 'unknown' and intent.confidence >= 0.4:
+                # Execute Workspace operation
+                print(f"\n{Fore.YELLOW}Hermes{Style.RESET_ALL}: [Executing {intent.service}.{intent.operation}]")
+                result = engine.execute_query(
+                    query=query,
+                    output_format='table',
+                    allow_interactive=True,
+                )
+                if result.get('output'):
+                    print(result['output'])
+            else:
+                # Fall back to general chatbot conversation
+                print(f"\n{Fore.YELLOW}AI{Style.RESET_ALL}: ", end="", flush=True)
+                response = chatbot.chat(query)
+                print(response)
+
         except KeyboardInterrupt:
             print_info("\nEnding chat session. Goodbye!")
             break
         except Exception as e:
             print_error(f"Error: {e}")
-            break
 
 
 def print_section(title: str):

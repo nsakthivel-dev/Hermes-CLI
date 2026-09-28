@@ -71,7 +71,27 @@ class NaturalLanguageProcessor:
                 r'(?i)(create|make|write).*document',
                 r'(?i)(new|start).*document',
                 r'(?i)document.*about',
-            ]
+            ],
+            'sheets_search': [
+                r'(?i)(find|search|look for|list|show).*spreadsheet',
+            ],
+            'sheets_read': [
+                r'(?i)(show|read|get).*data.*spreadsheet',
+                r'(?i)from.*spreadsheet',
+            ],
+            'tasks_search': [
+                r'(?i)(show|find|list|pending).*tasks?',
+                r'(?i)todo|todos',
+            ],
+            'tasks_create': [
+                r'(?i)(create|add|new).*task',
+            ],
+            'chat_search': [
+                r'(?i)(show|find|list).*(?:chat|spaces?)',
+            ],
+            'people_search': [
+                r'(?i)(show|find|list).*(?:contacts?|people)',
+            ],
         }
         
         self.time_patterns = {
@@ -87,6 +107,26 @@ class NaturalLanguageProcessor:
         """Get start of current week (Monday)"""
         today = datetime.now().date()
         return today - timedelta(days=today.weekday())
+
+    def _map_intent_to_service_op(self, intent: str) -> Tuple[str, str, bool]:
+        """Map high-level intent to service, operation, and requires_confirmation."""
+        mapping = {
+            'calendar_search': ('calendar', 'list_events', False),
+            'calendar_create': ('calendar', 'create_event', True),
+            'email_search': ('gmail', 'list_messages', False),
+            'email_send': ('gmail', 'send_message', True),
+            'docs_search': ('docs', 'list_documents', False),
+            'docs_create': ('docs', 'create_document', True),
+            'sheets_search': ('sheets', 'list_spreadsheets', False),
+            'sheets_read': ('sheets', 'get_sheet_data', False),
+            'tasks_search': ('tasks', 'list_tasks', False),
+            'tasks_create': ('tasks', 'create_task', True),
+            'chat_search': ('chat', 'list_spaces', False),
+            'people_search': ('people', 'list_contacts', False),
+            'summarize': ('gmail', 'summarize_messages', False),
+            'analytics': ('analytics', 'overview', False),
+        }
+        return mapping.get(intent, ('unknown', 'unknown', False))
     
     def parse_command(self, query: str) -> Dict[str, Any]:
         """
@@ -96,7 +136,7 @@ class NaturalLanguageProcessor:
             query: Natural language query
             
         Returns:
-            Dict with intent, entities, and parameters
+            Dict with intent, service, operation, entities, parameters, and confidence
         """
         query = query.strip()
         
@@ -106,6 +146,15 @@ class NaturalLanguageProcessor:
                 result = self._parse_with_gemini(query)
                 if result:
                     result['original_query'] = query
+                    if 'parameters' not in result and 'params' in result:
+                        result['parameters'] = result['params']
+                    elif 'params' not in result and 'parameters' in result:
+                        result['params'] = result['parameters']
+                    if 'service' not in result:
+                        svc, op, req_c = self._map_intent_to_service_op(result.get('intent', 'unknown'))
+                        result['service'] = svc
+                        result['operation'] = op
+                        result['requires_confirmation'] = req_c
                     return result
             except Exception as e:
                 logger.error(f"Gemini parsing failed, falling back to regex: {e}")
@@ -119,37 +168,37 @@ class NaturalLanguageProcessor:
         
         # Generate parameters
         params = self._generate_parameters(intent, entities, query)
+        service, operation, req_confirm = self._map_intent_to_service_op(intent)
+        confidence = self._calculate_confidence(intent, entities)
         
         return {
             'intent': intent,
+            'service': service,
+            'operation': operation,
             'entities': entities,
             'params': params,
+            'parameters': params,
+            'requires_confirmation': req_confirm,
             'original_query': query,
-            'confidence': self._calculate_confidence(intent, entities)
+            'confidence': confidence,
         }
 
     def _parse_with_gemini(self, query: str) -> Optional[Dict[str, Any]]:
-        """Parse command using Gemini AI"""
+        """Parse command using Gemini AI with structured schema"""
         prompt = f'''
-        Analyze the following command for a GSuite CLI tool.
+        Analyze the following command for Google Workspace CLI.
         Command: "{query}"
-        
-        Available intents:
-        - calendar_search (finding events)
-        - email_search (finding emails)
-        - email_send (sending emails)
-        - calendar_create (creating events)
-        - analytics (productivity stats)
-        - summarize (summarizing content)
-        - docs_search (finding docs)
-        - docs_create (creating docs)
-        
         Current date: {datetime.now().strftime('%Y-%m-%d')}
         
+        Allowed services: gmail, calendar, drive, sheets, docs, meet, forms, tasks, chat, people
+        
         Return ONLY a JSON object with:
-        - intent: one of the above or 'unknown'
-        - entities: dict of extracted entities
-        - params: dict of parameters derived from entities (e.g. for calendar_search: time_min, time_max, query; for email_send: to, subject, body)
+        - intent: one of list, get, search, create, delete, summarize
+        - service: one of the allowed services above
+        - operation: specific operation (e.g. list_messages, list_events, get_sheet_data, list_tasks, list_files)
+        - entities: dict of extracted entities (e.g. email, person, resource_name, date)
+        - parameters: dict of parameters (e.g. query, time_range, max_results, resource_name)
+        - requires_confirmation: boolean (true for send, delete, create, or clear)
         - confidence: float between 0 and 1
         '''
         
@@ -163,7 +212,10 @@ class NaturalLanguageProcessor:
             start_idx = text.find('{')
             end_idx = text.rfind('}') + 1
             if start_idx != -1 and end_idx != -1:
-                return json.loads(text[start_idx:end_idx])
+                parsed = json.loads(text[start_idx:end_idx])
+                if 'params' not in parsed and 'parameters' in parsed:
+                    parsed['params'] = parsed['parameters']
+                return parsed
         except Exception as e:
             logger.error(f"Error parsing Gemini response: {e}")
             return None

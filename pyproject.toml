@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hermes-cli"
-version = "0.1.0"
-description = "Advanced CLI tool for Google Workspace services and Gemini AI"
+version = "0.2.0"
+description = "Advanced CLI tool for Google Workspace with Gemini-powered Natural Language Query execution"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -30,7 +30,7 @@ keywords = [
     "ai",
 ]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "Intended Audience :: End Users/Desktop",
     "Operating System :: OS Independent",
